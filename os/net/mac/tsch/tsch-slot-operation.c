@@ -149,6 +149,12 @@ static rtimer_clock_t volatile current_slot_start;
 /* Are we currently inside a slot? */
 static volatile int tsch_in_slot_operation = 0;
 
+#ifdef TSCH_CALLBACK_SLOTFRAME_BOUNDARY
+/* Flag set at slotframe boundary, processed in main thread */
+volatile uint8_t tsch_slotframe_boundary_flag = 0;
+static uint32_t tsch_last_boundary_asn = 0;
+#endif
+
 /* If we are inside a slot, these tell the current channel and channel offset */
 uint8_t tsch_current_channel;
 uint8_t tsch_current_channel_offset;
@@ -1173,6 +1179,16 @@ PT_THREAD(tsch_slot_operation(struct rtimer *t, void *ptr))
 
         /* Update ASN */
         TSCH_ASN_INC(tsch_current_asn, timeslot_diff);
+#ifdef TSCH_CALLBACK_SLOTFRAME_BOUNDARY
+        {
+          uint32_t curr_sf = tsch_current_asn.ls4b / TSCH_CALLBACK_SLOTFRAME_BOUNDARY;
+          if(curr_sf != tsch_last_boundary_asn) {
+            tsch_last_boundary_asn = curr_sf;
+            tsch_slotframe_boundary_flag = 1;
+            process_poll(&tsch_pending_events_process);
+          }
+        }
+#endif
         /* Time to next wake up */
         time_to_next_active_slot = timeslot_diff * tsch_timing[tsch_ts_timeslot_length] + drift_correction;
         time_to_next_active_slot += tsch_timesync_adaptive_compensate(time_to_next_active_slot);

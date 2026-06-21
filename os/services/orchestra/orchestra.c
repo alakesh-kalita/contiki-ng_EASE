@@ -48,6 +48,10 @@
 #include "net/routing/rpl-classic/rpl-private.h"
 #endif
 
+#if BUILD_WITH_EASE
+#include "ease.h"
+#endif
+
 #include "sys/log.h"
 #define LOG_MODULE "Orchestra"
 #define LOG_LEVEL  LOG_LEVEL_MAC
@@ -70,21 +74,43 @@ const struct orchestra_rule *all_rules[] = ORCHESTRA_RULES;
 static void
 orchestra_packet_received(void)
 {
+#if BUILD_WITH_EASE
+  ease_check_slotframe_boundary();
+  {
+    const linkaddr_t *src = packetbuf_addr(PACKETBUF_ADDR_SENDER);
+    if(src != NULL && !linkaddr_cmp(src, &linkaddr_null)
+       && !linkaddr_cmp(src, &linkaddr_node_addr)
+       && !linkaddr_cmp(src, &orchestra_parent_linkaddr)) {
+      ease_notify_rx(src);
+    }
+  }
+#endif
 }
 /*---------------------------------------------------------------------------*/
 static void
 orchestra_packet_sent(int mac_status)
 {
-  /* Check if our parent just ACKed a DAO */
   if(orchestra_parent_knows_us == 0
      && mac_status == MAC_TX_OK
-     && packetbuf_attr(PACKETBUF_ATTR_NETWORK_ID) == UIP_PROTO_ICMP6
-     && packetbuf_attr(PACKETBUF_ATTR_CHANNEL) == (ICMP6_RPL << 8 | RPL_CODE_DAO)) {
+     && !linkaddr_cmp(&orchestra_parent_linkaddr, &linkaddr_null)
+     && linkaddr_cmp(&orchestra_parent_linkaddr,
+                     packetbuf_addr(PACKETBUF_ADDR_RECEIVER))) {
+    orchestra_parent_knows_us = 1;
+  }
+
+#if BUILD_WITH_EASE
+  ease_check_slotframe_boundary();
+  if(mac_status == MAC_TX_OK
+     && packetbuf_attr(PACKETBUF_ATTR_FRAME_TYPE) == FRAME802154_DATAFRAME) {
+    /* Track successful TX to parent for self-CUSUM */
     if(!linkaddr_cmp(&orchestra_parent_linkaddr, &linkaddr_null)
-       && linkaddr_cmp(&orchestra_parent_linkaddr, packetbuf_addr(PACKETBUF_ADDR_RECEIVER))) {
-      orchestra_parent_knows_us = 1;
+       && linkaddr_cmp(&orchestra_parent_linkaddr,
+                       packetbuf_addr(PACKETBUF_ADDR_RECEIVER))) {
+      ease_notify_tx();
+      ease_notify_shared_tx_success();
     }
   }
+#endif
 }
 /*---------------------------------------------------------------------------*/
 void

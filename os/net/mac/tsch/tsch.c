@@ -981,6 +981,15 @@ PROCESS_THREAD(tsch_pending_events_process, ev, data)
     tsch_tx_process_pending();
     tsch_log_process_pending();
     tsch_keepalive_process_pending();
+#ifdef TSCH_CALLBACK_SLOTFRAME_BOUNDARY
+    {
+      extern volatile uint8_t tsch_slotframe_boundary_flag;
+      if(tsch_slotframe_boundary_flag) {
+        tsch_slotframe_boundary_flag = 0;
+        TSCH_CALLBACK_SLOTFRAME_BOUNDARY_CB();
+      }
+    }
+#endif
 #ifdef TSCH_CALLBACK_SELECT_CHANNELS
     TSCH_CALLBACK_SELECT_CHANNELS();
 #endif
