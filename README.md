@@ -6,28 +6,11 @@ EASE is an autonomous TSCH scheduling scheme for IEEE 802.15.4e networks that co
 
 ## Table of Contents
 
-1. [Overview](#overview)
-2. [File Structure](#file-structure)
-3. [How EASE Works](#how-ease-works)
-4. [Configuration Parameters](#configuration-parameters)
-5. [Building and Running](#building-and-running)
-6. [Performance Evaluation](#performance-evaluation)
-7. [Comparison with Orchestra](#comparison-with-orchestra)
-8. [Troubleshooting](#troubleshooting)
-
----
-
-## Overview
-
-EASE addresses three key limitations of existing autonomous TSCH schedulers:
-
-1. **Bootstrapping delay**: Existing pair-based schemes (like Orchestra sender-based) require the parent to know the child before creating matching RX cells. EASE uses a receiver-based shared cell that the parent always listens on — any child can reach it immediately.
-
-2. **Static cell allocation**: Orchestra allocates one fixed cell per neighbor regardless of traffic. EASE uses a CUSUM-based traffic predictor to dynamically allocate dedicated cells per child based on observed demand.
-
-3. **Unlimited resource consumption**: Without constraints, a node with many bursty children can exhaust its radio duty cycle. EASE's game-theoretic model enforces a fair RDC budget across all children.
-
-**Performance**: EASE achieves ~90% PDR vs Orchestra's ~34% PDR in a 25-node network at 4 pkt/min, with comparable energy consumption.
+1. [File Structure](#file-structure)
+2. [How EASE Works](#how-ease-works)
+3. [Configuration Parameters](#configuration-parameters)
+4. [Building and Running](#building-and-running)
+5. [Performance Evaluation](#performance-evaluation)
 
 ---
 
@@ -111,7 +94,7 @@ Slotframe N+1:
 
   7. Token bucket: tokens initialized per child
      - Decremented on each received packet
-     - tokens = 0 → NACK (withhold ACK)
+     - tokens = 1 → EACK (informing quato exhaution)
 ```
 
 ### Key Design Decisions
@@ -120,7 +103,6 @@ Slotframe N+1:
 |----------|-----------|
 | Receiver-based shared cell `hash(P)` | Parent always has RX cell — no bootstrapping delay. Unlike pair-based `hash(P,C)`, parent doesn't need to know the child first. |
 | Asymmetric hash `263×P + C` | Prevents collision between pairs with same address sum (e.g., nodes 4→9 and 7→6 both sum to 13). Factor 263 (prime > 256) ensures unique hash inputs. |
-| Fixed cell positions (no ASFN) | Both sides always agree on timeslot/channel without synchronized rebuilds. TSCH's native hopping sequence provides frequency diversity. |
 | Incremental cell addition | `ease_update_dedicated_cells()` only adds new cells when CUSUM prediction increases. Never removes existing cells. Full rebuild only on parent change or child removal. |
 | Game theory as CAP, not FLOOR | CUSUM drives allocation. Game theory only restricts when prediction exceeds the fair share. At low traffic, CUSUM prediction (1 cell) < quota (4-5 cells) → no restriction. |
 
@@ -159,7 +141,6 @@ Slotframe N+1:
 | `EASE_PACKETS_PER_MIN` | 4 | Application packet rate |
 | `EASE_CONF_MAX_CHILDREN` | 25 | For 25-node network |
 | `ORCHESTRA_CONF_RULES` | `{EB, dedicated, shared, common}` | Rule priority order |
-| `TSCH_CALLBACK_DO_NACK` | `ease_do_nack` | Token-based NACK |
 | `TSCH_SCHEDULE_CONF_MAX_LINKS` | 128 | Accommodate dedicated cells |
 
 ---
@@ -268,41 +249,6 @@ evaluation_results/
 | **Channel Util. (%)** | aggregate TX time / total time × 100 | `ENERGEST` TX ticks |
 
 ---
-
-## Comparison with Orchestra
-
-### Results (SF=101, 4 pkt/min, 25 nodes, 5×5 grid, perfect links)
-
-| Metric | EASE | Orchestra-SB | Orchestra-RB |
-|--------|------|-------------|--------------|
-| **PDR** | **90.7%** | 33.7% | ~31% |
-| **RDC** | 3.5% | 2.4% | ~2.5% |
-| **Latency** | 22.6s | 18.4s | ~18s |
-| **Senders** | 24/24 | 22/24 | ~22/24 |
-
-### Why EASE Outperforms Orchestra
-
-1. **No bootstrapping delay**: Orchestra-SB requires `parent_knows_us` (DAO ACK) before activating unicast cells. EASE's receiver-based shared cell works immediately.
-
-2. **Adaptive capacity**: Orchestra allocates 1 fixed cell per neighbor. EASE allocates 1-10 cells per child based on CUSUM prediction.
-
-3. **Fairness**: Orchestra has no fairness mechanism — all children compete equally. EASE's fairness constraint reduces shared cell contention by prohibiting re-contention after success.
-
-4. **Energy awareness**: Orchestra's RDC depends on number of neighbors. EASE's game theory enforces a fixed RDC budget regardless of children count.
-
----
-
-## Troubleshooting
-
-### Common Issues
-
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| PDR = 0% | Orchestra builds fail — `ease.h` not found | Check `#if BUILD_WITH_EASE` guard in `node.c` |
-| PDR = 0% | ScriptRunner missing for headless mode | Use `run_evaluation.py` which adds it automatically |
-| Low PDR with EASE | Per-slotframe schedule rebuild disrupting shared cell | Ensure `ease_rebuild_dedicated_schedule()` is NOT called from `ease_slotframe_update()` |
-| RPL loops | NACK causing link quality degradation | Check token initialization — minimum 1 token per child |
-| Build error: `EASE_UNICAST_PERIOD` undeclared | TSCH core file can't see ease-conf.h | Use `#ifndef` guard with literal value in project-conf.h |
 
 ### Debugging
 
