@@ -67,8 +67,12 @@ uint16_t ease_get_self_num_cells(void);
 /* ASFN */
 uint32_t ease_get_asfn(void);
 
-/* NACK callback */
+/* Budget-exhausted indication piggybacked in enhanced ACK (parent side) */
 int ease_do_nack(struct tsch_link *link, linkaddr_t *src, linkaddr_t *dst);
+
+/* Budget-exhausted indication received in enhanced ACK (child side) */
+void ease_notify_budget_exhausted(void);
+int ease_is_budget_exhausted(void);
 
 /* Schedule management */
 void ease_rebuild_dedicated_schedule(void);

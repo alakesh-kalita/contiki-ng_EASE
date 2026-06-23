@@ -726,6 +726,13 @@ PT_THREAD(tsch_tx_slot(struct pt *pt, struct rtimer *t))
                 }
                 mac_tx_status = MAC_TX_OK;
 
+#ifdef TSCH_CALLBACK_EACK_NACK_RECEIVED
+                if(ack_ies.ie_is_nack) {
+                  void TSCH_CALLBACK_EACK_NACK_RECEIVED(void);
+                  TSCH_CALLBACK_EACK_NACK_RECEIVED();
+                }
+#endif
+
                 /* We requested an extra slot and got an ack. This means
                 the extra slot will be scheduled at the received */
                 if(burst_link_requested) {

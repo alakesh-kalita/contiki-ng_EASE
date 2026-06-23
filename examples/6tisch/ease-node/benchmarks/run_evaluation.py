@@ -27,9 +27,10 @@ from collections import defaultdict
 # Paths
 # ---------------------------------------------------------------------------
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-CONTIKI_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, '..', '..', '..'))
+PROJECT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, '..'))
+CONTIKI_DIR = os.path.abspath(os.path.join(PROJECT_DIR, '..', '..', '..'))
 COOJA_DIR = os.path.join(CONTIKI_DIR, 'tools', 'cooja')
-CSC_TEMPLATE = os.path.join(SCRIPT_DIR, 'ease-25node.csc')
+CSC_TEMPLATE = os.path.join(PROJECT_DIR, 'ease-25node.csc')
 RESULTS_DIR = os.path.join(SCRIPT_DIR, 'evaluation_results')
 
 # ---------------------------------------------------------------------------
@@ -77,6 +78,7 @@ EASE_CONF = """\
                                &default_common }}
 
 #define TSCH_CALLBACK_DO_NACK ease_do_nack
+#define TSCH_CALLBACK_EACK_NACK_RECEIVED ease_notify_budget_exhausted
 #define TSCH_CALLBACK_NEW_TIME_SOURCE orchestra_callback_new_time_source
 #define TSCH_CALLBACK_PACKET_READY orchestra_callback_packet_ready
 #define TSCH_CALLBACK_ROOT_NODE_UPDATED orchestra_callback_root_node_updated
@@ -85,7 +87,7 @@ EASE_CONF = """\
 #define NETSTACK_CONF_DS6_NEIGHBOR_UPDATED_CALLBACK orchestra_callback_neighbor_updated
 
 #define RPL_CONF_MOP RPL_MOP_STORING_NO_MULTICAST
-#define TSCH_SCHEDULE_CONF_MAX_LINKS 128
+#define TSCH_SCHEDULE_CONF_MAX_LINKS 256
 #define TSCH_SCHEDULE_CONF_MAX_SLOTFRAMES 6
 #define TSCH_CONF_DEFAULT_HOPPING_SEQUENCE TSCH_HOPPING_SEQUENCE_16_16
 #define ENERGEST_CONF_ON               1
@@ -95,7 +97,7 @@ EASE_CONF = """\
 #define LOG_CONF_LEVEL_IPV6                        LOG_LEVEL_WARN
 #define LOG_CONF_LEVEL_6LOWPAN                     LOG_LEVEL_WARN
 #define LOG_CONF_LEVEL_MAC                         LOG_LEVEL_INFO
-#define TSCH_LOG_CONF_PER_SLOT                     1
+#define TSCH_LOG_CONF_PER_SLOT                     0
 
 #endif
 """
@@ -128,7 +130,7 @@ ORCHESTRA_SB_CONF = """\
 #define NETSTACK_CONF_DS6_NEIGHBOR_UPDATED_CALLBACK orchestra_callback_neighbor_updated
 
 #define RPL_CONF_MOP RPL_MOP_STORING_NO_MULTICAST
-#define TSCH_SCHEDULE_CONF_MAX_LINKS 128
+#define TSCH_SCHEDULE_CONF_MAX_LINKS 256
 #define TSCH_SCHEDULE_CONF_MAX_SLOTFRAMES 6
 #define TSCH_CONF_DEFAULT_HOPPING_SEQUENCE TSCH_HOPPING_SEQUENCE_16_16
 #define ENERGEST_CONF_ON               1
@@ -138,7 +140,7 @@ ORCHESTRA_SB_CONF = """\
 #define LOG_CONF_LEVEL_IPV6                        LOG_LEVEL_WARN
 #define LOG_CONF_LEVEL_6LOWPAN                     LOG_LEVEL_WARN
 #define LOG_CONF_LEVEL_MAC                         LOG_LEVEL_INFO
-#define TSCH_LOG_CONF_PER_SLOT                     1
+#define TSCH_LOG_CONF_PER_SLOT                     0
 
 #endif
 """
@@ -171,7 +173,7 @@ ORCHESTRA_RB_CONF = """\
 #define NETSTACK_CONF_DS6_NEIGHBOR_UPDATED_CALLBACK orchestra_callback_neighbor_updated
 
 #define RPL_CONF_MOP RPL_MOP_STORING_NO_MULTICAST
-#define TSCH_SCHEDULE_CONF_MAX_LINKS 128
+#define TSCH_SCHEDULE_CONF_MAX_LINKS 256
 #define TSCH_SCHEDULE_CONF_MAX_SLOTFRAMES 6
 #define TSCH_CONF_DEFAULT_HOPPING_SEQUENCE TSCH_HOPPING_SEQUENCE_16_16
 #define ENERGEST_CONF_ON               1
@@ -181,7 +183,7 @@ ORCHESTRA_RB_CONF = """\
 #define LOG_CONF_LEVEL_IPV6                        LOG_LEVEL_WARN
 #define LOG_CONF_LEVEL_6LOWPAN                     LOG_LEVEL_WARN
 #define LOG_CONF_LEVEL_MAC                         LOG_LEVEL_INFO
-#define TSCH_LOG_CONF_PER_SLOT                     1
+#define TSCH_LOG_CONF_PER_SLOT                     0
 
 #endif
 """
@@ -262,8 +264,8 @@ def generate_csc(output_path, timeout_ms=SIM_DURATION_MS):
 
 def setup_scheme(scheme, sf, rate):
     """Write project-conf.h and Makefile for the given scheme."""
-    conf_path = os.path.join(SCRIPT_DIR, 'project-conf.h')
-    make_path = os.path.join(SCRIPT_DIR, 'Makefile')
+    conf_path = os.path.join(PROJECT_DIR, 'project-conf.h')
+    make_path = os.path.join(PROJECT_DIR, 'Makefile')
 
     with open(conf_path, 'w') as f:
         f.write(CONF_TEMPLATES[scheme].format(sf=sf, rate=rate))
@@ -346,10 +348,18 @@ def parse_log(testlog_path):
                 energest[int(m.group(1))].append(
                     (int(m.group(4)), int(m.group(5)), int(m.group(6))))
 
-    return tx_events, rx_events, energest
+    # Count parent switches from full log
+    parent_switches = 0
+    with open(testlog_path, 'r', errors='replace') as f:
+        for line in f:
+            if 'Parent switch' in line:
+                parent_switches += 1
+
+    return tx_events, rx_events, energest, parent_switches
 
 
-def compute_metrics(tx_events, rx_events, energest, sf_length, pkt_rate, scheme):
+def compute_metrics(tx_events, rx_events, energest, sf_length, pkt_rate, scheme,
+                    parent_switches=0):
     """Compute PDR, RDC, latency, channel utilization."""
     total_tx = len(tx_events)
     total_rx = len(rx_events)
@@ -386,6 +396,7 @@ def compute_metrics(tx_events, rx_events, energest, sf_length, pkt_rate, scheme)
         'chan_util': round(chan_util, 4),
         'total_tx': total_tx,
         'total_rx': total_rx,
+        'parent_switches': parent_switches,
     }
 
 
@@ -395,9 +406,9 @@ def compute_metrics(tx_events, rx_events, energest, sf_length, pkt_rate, scheme)
 def print_summary(results):
     """Print formatted results table."""
     hdr = ('{:<15} {:>4}  {:>5}  {:>7}  {:>7}  '
-           '{:>9}  {:>8}  {:>6}  {:>6}'.format(
+           '{:>9}  {:>8}  {:>6}  {:>6}  {:>6}'.format(
            'Scheme', 'SF', 'Rate', 'PDR%', 'RDC%',
-           'Lat(ms)', 'ChUtil%', 'TX', 'RX'))
+           'Lat(ms)', 'ChUtil%', 'TX', 'RX', 'PSw'))
     sep = '-' * len(hdr)
     print('\n' + sep)
     print('  Performance Evaluation (last 20 min of 30-min sim)')
@@ -406,18 +417,20 @@ def print_summary(results):
     print(sep)
     for r in results:
         print('{:<15} {:>4}  {:>5}  {:>7.2f}  {:>7.3f}  '
-              '{:>9.1f}  {:>8.3f}  {:>6}  {:>6}'.format(
+              '{:>9.1f}  {:>8.3f}  {:>6}  {:>6}  {:>6}'.format(
               r['scheme'], r['sf_length'], r['pkt_rate'],
               r['pdr'], r['avg_rdc'],
               r['avg_latency_ms'], r['chan_util'],
-              r['total_tx'], r['total_rx']))
+              r['total_tx'], r['total_rx'],
+              r['parent_switches']))
     print(sep)
 
 
 def write_csv(results, csv_path):
     """Write results CSV."""
     fieldnames = ['scheme', 'sf_length', 'pkt_rate', 'pdr', 'avg_rdc',
-                  'avg_latency_ms', 'chan_util', 'total_tx', 'total_rx']
+                  'avg_latency_ms', 'chan_util', 'total_tx', 'total_rx',
+                  'parent_switches']
     with open(csv_path, 'w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -443,8 +456,8 @@ def main():
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
     # Backup original files
-    conf_orig = os.path.join(SCRIPT_DIR, 'project-conf.h')
-    make_orig = os.path.join(SCRIPT_DIR, 'Makefile')
+    conf_orig = os.path.join(PROJECT_DIR, 'project-conf.h')
+    make_orig = os.path.join(PROJECT_DIR, 'Makefile')
     conf_bak = conf_orig + '.eval_bak'
     make_bak = make_orig + '.eval_bak'
     shutil.copy2(conf_orig, conf_bak)
@@ -455,7 +468,7 @@ def main():
     total = len(configs)
     results = []
 
-    csc_path = os.path.join(SCRIPT_DIR, '_eval_temp.csc')
+    csc_path = os.path.join(PROJECT_DIR, '_eval_temp.csc')
 
     try:
         if not args.parse_only:
@@ -482,11 +495,12 @@ def main():
                     results.append({
                         'scheme': scheme, 'sf_length': sf, 'pkt_rate': rate,
                         'pdr': 0, 'avg_rdc': 0, 'avg_latency_ms': 0,
-                        'chan_util': 0, 'total_tx': 0, 'total_rx': 0})
+                        'chan_util': 0, 'total_tx': 0, 'total_rx': 0,
+                        'parent_switches': 0})
                     continue
 
-                tx, rx, en = parse_log(testlog)
-                m = compute_metrics(tx, rx, en, sf, rate, scheme)
+                tx, rx, en, psw = parse_log(testlog)
+                m = compute_metrics(tx, rx, en, sf, rate, scheme, psw)
                 results.append(m)
                 print('  PDR={:.1f}%  RDC={:.2f}%  Lat={:.0f}ms'.format(
                       m['pdr'], m['avg_rdc'], m['avg_latency_ms']))
@@ -501,10 +515,11 @@ def main():
                     results.append({
                         'scheme': scheme, 'sf_length': sf, 'pkt_rate': rate,
                         'pdr': 0, 'avg_rdc': 0, 'avg_latency_ms': 0,
-                        'chan_util': 0, 'total_tx': 0, 'total_rx': 0})
+                        'chan_util': 0, 'total_tx': 0, 'total_rx': 0,
+                        'parent_switches': 0})
                     continue
-                tx, rx, en = parse_log(testlog)
-                m = compute_metrics(tx, rx, en, sf, rate, scheme)
+                tx, rx, en, psw = parse_log(testlog)
+                m = compute_metrics(tx, rx, en, sf, rate, scheme, psw)
                 results.append(m)
 
     finally:

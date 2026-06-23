@@ -24,6 +24,7 @@ static uint8_t shared_tx_this_sf = 0;
 static uint16_t self_predicted = 0;
 static uint16_t self_pkts_this_sf = 0;
 static uint32_t last_asfn = 0;
+static uint8_t budget_exhausted_by_parent = 0;
 
 /*---------------------------------------------------------------------------*/
 void
@@ -46,6 +47,7 @@ ease_init(void)
   self_predicted = 0;
   self_pkts_this_sf = 0;
   last_asfn = 0;
+  budget_exhausted_by_parent = 0;
 }
 /*---------------------------------------------------------------------------*/
 struct ease_child_state *
@@ -161,9 +163,10 @@ ease_slotframe_update(void)
     self_pkts_this_sf = 0;
   }
 
-  /* 3. Fairness tracking */
+  /* 3. Fairness tracking + reset budget-exhausted flag */
   shared_tx_last_sf = shared_tx_this_sf;
   shared_tx_this_sf = 0;
+  budget_exhausted_by_parent = 0;
 
   /* 4. Game theory: cap predictions within RDC budget */
 #if EASE_WITH_GAME_THEORY
@@ -288,7 +291,22 @@ ease_do_nack(struct tsch_link *link, linkaddr_t *src, linkaddr_t *dst)
   if(src == NULL) return 0;
   c = ease_find_child(src);
   if(c == NULL) return 0;
-  if(c->tokens == 0) return 1;
+  if(c->tokens == 0) {
+    LOG_INFO("Budget-exhausted for ");
+    LOG_INFO_LLADDR(src);
+    LOG_INFO_(", piggybacking in EACK\n");
+    return 1;
+  }
 #endif
   return 0;
 }
+/*---------------------------------------------------------------------------*/
+void
+ease_notify_budget_exhausted(void)
+{
+  budget_exhausted_by_parent = 1;
+  LOG_INFO("Received budget-exhausted from parent, backing off dedicated cells\n");
+}
+/*---------------------------------------------------------------------------*/
+int
+ease_is_budget_exhausted(void) { return budget_exhausted_by_parent; }

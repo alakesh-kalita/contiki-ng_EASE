@@ -191,6 +191,21 @@ orchestra_callback_new_time_source(const struct tsch_neighbor *old, const struct
 
   int i;
   if(new != old) {
+    const linkaddr_t *old_addr = tsch_queue_get_nbr_address(old);
+    const linkaddr_t *new_addr = tsch_queue_get_nbr_address(new);
+    LOG_INFO("Parent switch: ");
+    if(old_addr != NULL) {
+      LOG_INFO_LLADDR(old_addr);
+    } else {
+      LOG_INFO_("NULL");
+    }
+    LOG_INFO_(" -> ");
+    if(new_addr != NULL) {
+      LOG_INFO_LLADDR(new_addr);
+    } else {
+      LOG_INFO_("NULL");
+    }
+    LOG_INFO_("\n");
     orchestra_parent_knows_us = 0;
   }
   for(i = 0; i < NUM_RULES; i++) {

@@ -40,6 +40,7 @@
 #endif
 
 #include <string.h>
+#include "lib/random.h"
 
 #define LOG_MODULE "EASE-App"
 #define LOG_LEVEL  LOG_LEVEL_INFO
@@ -54,6 +55,19 @@
 #define SEND_INTERVAL ((60 * CLOCK_SECOND) / EASE_PACKETS_PER_MIN)
 #define ENERGEST_INTERVAL (60 * CLOCK_SECOND)
 
+/* Traffic models: 0=constant, 1=poisson, 2=on/off burst */
+#ifndef TRAFFIC_MODEL
+#define TRAFFIC_MODEL 0
+#endif
+
+/* ON/OFF parameters: ON for 30s at 2x rate, OFF for 30s */
+#ifndef ONOFF_ON_DURATION
+#define ONOFF_ON_DURATION  (30 * CLOCK_SECOND)
+#endif
+#ifndef ONOFF_OFF_DURATION
+#define ONOFF_OFF_DURATION (30 * CLOCK_SECOND)
+#endif
+
 struct perf_msg {
   uint16_t src_id;
   uint32_t seq;
@@ -63,6 +77,55 @@ struct perf_msg {
 static struct simple_udp_connection udp_conn;
 static uint32_t app_tx_count = 0;
 static uint32_t app_rx_count = 0;
+
+#if TRAFFIC_MODEL == 2
+static uint8_t onoff_state = 1; /* 1=ON, 0=OFF */
+static clock_time_t onoff_next_toggle = 0;
+#endif
+
+/*---------------------------------------------------------------------------*/
+static clock_time_t
+next_send_interval(void)
+{
+#if TRAFFIC_MODEL == 0
+  /* Constant rate */
+  return SEND_INTERVAL;
+
+#elif TRAFFIC_MODEL == 1
+  /* Poisson: exponential inter-arrival, mean = SEND_INTERVAL */
+  /* -mean * ln(U), U ~ uniform(0,1) */
+  {
+    uint16_t r = random_rand();
+    if(r == 0) r = 1;
+    /* Approximate -ln(U) using fixed-point: -ln(r/65535) */
+    /* For simplicity: scale random to [1, SEND_INTERVAL*3] */
+    clock_time_t interval = (SEND_INTERVAL / 2) +
+                            (random_rand() % (SEND_INTERVAL * 2));
+    if(interval < CLOCK_SECOND / 2) interval = CLOCK_SECOND / 2;
+    return interval;
+  }
+
+#elif TRAFFIC_MODEL == 2
+  /* ON/OFF: during ON send at 2x rate, during OFF no sends */
+  {
+    clock_time_t now = clock_time();
+    if(onoff_next_toggle == 0) {
+      onoff_next_toggle = now + ONOFF_ON_DURATION;
+    }
+    if(now >= onoff_next_toggle) {
+      onoff_state = !onoff_state;
+      onoff_next_toggle = now + (onoff_state ? ONOFF_ON_DURATION : ONOFF_OFF_DURATION);
+    }
+    if(onoff_state) {
+      return SEND_INTERVAL / 2;  /* ON: send at 2x rate */
+    } else {
+      return ONOFF_OFF_DURATION + (random_rand() % CLOCK_SECOND);
+    }
+  }
+#else
+  return SEND_INTERVAL;
+#endif
+}
 
 #if ENERGEST_CONF_ON
 static uint64_t last_cpu, last_lpm, last_tx, last_listen, last_total;
@@ -169,7 +232,7 @@ PROCESS_THREAD(node_process, ev, data)
   etimer_set(&energest_timer, ENERGEST_INTERVAL);
 #endif
 
-  etimer_set(&send_timer, SEND_INTERVAL);
+  etimer_set(&send_timer, next_send_interval());
 
   while(1) {
     PROCESS_WAIT_EVENT();
@@ -183,6 +246,10 @@ PROCESS_THREAD(node_process, ev, data)
 
     if(etimer_expired(&send_timer)) {
       if(node_id != 1) {
+#if TRAFFIC_MODEL == 2
+        /* ON/OFF: only send during ON period */
+        if(onoff_state) {
+#endif
         if(NETSTACK_ROUTING.node_is_reachable() &&
            NETSTACK_ROUTING.get_root_ipaddr(&dest_ipaddr)) {
           app_tx_count++;
@@ -194,8 +261,11 @@ PROCESS_THREAD(node_process, ev, data)
                    (unsigned long)msg.tx_ticks);
           simple_udp_sendto(&udp_conn, &msg, sizeof(msg), &dest_ipaddr);
         }
+#if TRAFFIC_MODEL == 2
+        }
+#endif
       }
-      etimer_reset(&send_timer);
+      etimer_set(&send_timer, next_send_interval());
     }
   }
 

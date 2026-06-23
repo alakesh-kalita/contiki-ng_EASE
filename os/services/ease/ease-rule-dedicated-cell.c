@@ -197,10 +197,12 @@ select_packet(uint16_t *slotframe, uint16_t *timeslot, uint16_t *channel_offset)
   if(slotframe != NULL) *slotframe = slotframe_handle;
 
   /* After successful shared cell TX (fairness active) AND we have
-   * dedicated cells → use dedicated cell. Otherwise → shared cell. */
+   * dedicated cells AND budget not exhausted → use dedicated cell.
+   * Otherwise → shared cell. */
   if(linkaddr_cmp(dest, &orchestra_parent_linkaddr)
      && ease_should_skip_shared_cell()
-     && ease_get_self_num_cells() > 0) {
+     && ease_get_self_num_cells() > 0
+     && !ease_is_budget_exhausted()) {
     if(timeslot != NULL)
       *timeslot = ded_ts(&orchestra_parent_linkaddr, &linkaddr_node_addr, 0);
     if(channel_offset != NULL)
